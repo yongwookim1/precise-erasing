@@ -8,7 +8,6 @@ import os
 import re
 import numpy as np
 from diffusers import AutoencoderKL, UNet2DConditionModel
-from PIL import Image
 from tqdm.auto import tqdm
 from transformers import CLIPTextModel, CLIPTokenizer, CLIPFeatureExtractor
 from diffusers.schedulers import EulerAncestralDiscreteScheduler
@@ -138,7 +137,7 @@ if __name__ == '__main__':
     parser.add_argument('--negative_guidance', help='Negative guidance value', type=float, required=False, default=1)
     parser.add_argument('--save_path', help='Path to save model', type=str, default='models/')
     parser.add_argument('--device', help='cuda device to train on', type=str, required=False, default='cuda:0')
-    parser.add_argument('--lora', help='finetuning using lora', type=bool, default=True)
+    parser.add_argument('--lora', help='finetuning using lora', action='store_true')
 
     args = parser.parse_args()
     
