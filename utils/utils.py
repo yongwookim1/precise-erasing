@@ -317,14 +317,15 @@ class StableDiffuser(torch.nn.Module):
         latents_steps = [self.decode(latents.to(self.unet.device)) for latents in latents_steps]
         images_steps = [self.to_image(latents) for latents in latents_steps]
 
-        for i in range(len(images_steps)):
-            self.safety_checker = self.safety_checker.float()
-            safety_checker_input = self.feature_extractor(images_steps[i], return_tensors="pt").to(latents_steps[0].device)
-            image, has_nsfw_concept = self.safety_checker(
-                images=latents_steps[i].float().cpu().numpy(), clip_input=safety_checker_input.pixel_values.float()
-            )
+        # disable the safety checker
+        # for i in range(len(images_steps)):
+        #     self.safety_checker = self.safety_checker.float()
+        #     safety_checker_input = self.feature_extractor(images_steps[i], return_tensors="pt").to(latents_steps[0].device)
+        #     image, has_nsfw_concept = self.safety_checker(
+        #         images=latents_steps[i].float().cpu().numpy(), clip_input=safety_checker_input.pixel_values.float()
+        #     )
 
-            images_steps[i][0] = self.to_image(torch.from_numpy(image))[0]
+        #     images_steps[i][0] = self.to_image(torch.from_numpy(image))[0]
 
         images_steps = list(zip(*images_steps))
 
@@ -339,6 +340,8 @@ class FineTunedModel(torch.nn.Module):
     def __init__(self,
                  model,
                  train_method,
+                 lora_rank=None,
+                 lora_alpha=1.0,
                  ):
 
         super().__init__()
@@ -346,6 +349,8 @@ class FineTunedModel(torch.nn.Module):
         self.model = model
         self.ft_modules = {}
         self.orig_modules = {}
+        self.lora_modules = {}
+        self.module_forward_hooks = {}
 
         freeze(self.model)
 
@@ -379,33 +384,108 @@ class FineTunedModel(torch.nn.Module):
 
                 unfreeze(ft_module)
 
+                if lora_rank is not None:
+                    lora_module = self._create_lora_module(module, lora_rank, lora_alpha)
+                    self.lora_modules[module_name] = lora_module
+                    unfreeze(lora_module)
+
         self.ft_modules_list = torch.nn.ModuleList(self.ft_modules.values())
         self.orig_modules_list = torch.nn.ModuleList(self.orig_modules.values())
+        self.lora_modules_list = torch.nn.ModuleList(self.lora_modules.values())
 
+    def _create_lora_module(self, module, rank, alpha):
+        device = module.weight.device
         
-    @classmethod
-    def from_checkpoint(cls, model, checkpoint, train_method):
+        if isinstance(module, torch.nn.Linear):
+            lora_down = torch.nn.Linear(module.in_features, rank, bias=False)
+            lora_up = torch.nn.Linear(rank, module.out_features, bias=False)
+            
+            torch.nn.init.normal_(lora_down.weight, std=1.0/rank)
+            torch.nn.init.zeros_(lora_up.weight)
+            
+            lora_down = lora_down.to(device)
+            lora_up = lora_up.to(device)
+            
+            lora_module = LoRAModule(
+                lora_down=lora_down,
+                lora_up=lora_up,
+                alpha=alpha,
+                rank=rank
+            )
+            
+        elif isinstance(module, torch.nn.Conv2d):
+            lora_down = torch.nn.Conv2d(
+                module.in_channels, rank, 
+                kernel_size=1, padding=0, bias=False
+            )
+            lora_up = torch.nn.Conv2d(
+                rank, module.out_channels,
+                kernel_size=1, padding=0, bias=False
+            )
+            
+            torch.nn.init.normal_(lora_down.weight, std=1.0/rank)
+            torch.nn.init.zeros_(lora_up.weight)
+            
+            lora_down = lora_down.to(device)
+            lora_up = lora_up.to(device)
+            
+            lora_module = LoRAModule(
+                lora_down=lora_down,
+                lora_up=lora_up,
+                alpha=alpha,
+                rank=rank
+            )
+        else:
+            raise NotImplementedError(f"LoRA is not implemented for {type(module)}")
+        
+        return lora_module
 
+    @classmethod
+    def from_checkpoint(cls, model, checkpoint, train_method, lora_rank=None, lora_alpha=1.0):
         if isinstance(checkpoint, str):
             checkpoint = torch.load(checkpoint)
 
-        modules = [f"{key}$" for key in list(checkpoint.keys())]
-
-        ftm = FineTunedModel(model, train_method=train_method)
+        ftm = FineTunedModel(model, train_method=train_method, lora_rank=lora_rank, lora_alpha=lora_alpha)
         ftm.load_state_dict(checkpoint)
 
         return ftm
-
+    
+    def _hook_factory(self, module_name):
+        def hook(module, input_tensor, output_tensor):
+            # add LoRA results to outputs if LoRA module exists
+            if module_name in self.lora_modules:
+                lora_output = self.lora_modules[module_name](input_tensor[0])
+                return output_tensor + lora_output
+            return output_tensor
+        return hook
         
     def __enter__(self):
-
         for key, ft_module in self.ft_modules.items():
             set_module(self.model, key, ft_module)
+
+        # register the LoRA hook
+        for handle in self.module_forward_hooks.values():
+            handle.remove()
+        self.module_forward_hooks = {}
+            
+        # register the forward hook
+        if self.lora_modules:
+            for module_name, orig_module in self.orig_modules.items():
+                if module_name in self.lora_modules:
+                    hook = self._hook_factory(module_name)
+                    handle = orig_module.register_forward_hook(hook)
+                    self.module_forward_hooks[module_name] = handle
+
+        return self
 
     def __exit__(self, exc_type, exc_value, tb):
 
         for key, module in self.orig_modules.items():
             set_module(self.model, key, module)
+            
+        for handle in self.module_forward_hooks.values():
+            handle.remove()
+        self.module_forward_hooks = {}
 
     def parameters(self):
 
@@ -415,16 +495,35 @@ class FineTunedModel(torch.nn.Module):
 
             parameters.extend(list(ft_module.parameters()))
 
+        for lora_module in self.lora_modules.values():
+            parameters.extend(list(lora_module.parameters()))
+
         return parameters
 
     def state_dict(self):
 
         state_dict = {key: module.state_dict() for key, module in self.ft_modules.items()}
-
+        state_dict.update({f"lora_{key}": module.state_dict() for key, module in self.lora_modules.items()})
         return state_dict
 
     def load_state_dict(self, state_dict):
 
         for key, sd in state_dict.items():
-            
-            self.ft_modules[key].load_state_dict(sd)
+            if key.startswith("lora_"):
+                module_key = key[5:]
+                if module_key in self.lora_modules:
+                    self.lora_modules[module_key].load_state_dict(sd)
+            elif key in self.ft_modules:
+                self.ft_modules[key].load_state_dict(sd)
+
+
+class LoRAModule(torch.nn.Module):
+    def __init__(self, lora_down, lora_up, alpha, rank):
+        super().__init__()
+        self.lora_down = lora_down
+        self.lora_up = lora_up
+        self.scale = alpha / rank
+        self.rank = rank
+        
+    def forward(self, x):
+        return self.lora_up(self.lora_down(x)) * self.scale

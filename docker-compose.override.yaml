@@ -1,0 +1,8 @@
+services:
+  erasing:
+    volumes:
+      - /home/kyw1654:/mnt/home
+
+      - type: bind
+        source: /home/dataset # 서버의 nvme 확인
+        target: /mnt/data

@@ -18,14 +18,23 @@ from diffusers.schedulers.scheduling_lms_discrete import LMSDiscreteScheduler
 from diffusers.pipelines.stable_diffusion import StableDiffusionSafetyChecker
 from utils.utils import *
 
-def train(erase_concept, erase_from, train_method, iterations, negative_guidance, lr, save_path, device):
+def train(erase_concept, erase_from, train_method, iterations, negative_guidance, lr, save_path, device, lora):
   
     nsteps = 50
 
     diffuser = StableDiffuser(scheduler='DDIM').to(device)
     diffuser.train()
 
-    finetuner = FineTunedModel(diffuser, train_method=train_method)
+    if lora == True:
+        finetuner = FineTunedModel(diffuser, train_method=train_method)
+    else:
+        #fine-tuning using LoRA
+        finetuner = FineTunedModel(
+            model=diffuser,
+            train_method='xattn',
+            lora_rank=4,
+            lora_alpha=1.0,
+        )
 
     optimizer = torch.optim.Adam(finetuner.parameters(), lr=lr)
     criteria = torch.nn.MSELoss()
@@ -129,6 +138,7 @@ if __name__ == '__main__':
     parser.add_argument('--negative_guidance', help='Negative guidance value', type=float, required=False, default=1)
     parser.add_argument('--save_path', help='Path to save model', type=str, default='models/')
     parser.add_argument('--device', help='cuda device to train on', type=str, required=False, default='cuda:0')
+    parser.add_argument('--lora', help='finetuning using lora', type=bool, default=True)
 
     args = parser.parse_args()
     
@@ -141,9 +151,12 @@ if __name__ == '__main__':
     iterations = args.iterations #200
     negative_guidance = args.negative_guidance #1
     lr = args.lr #1e-5
+    lora = args.lora
     name = f"esd-{erase_concept.lower().replace(' ','').replace(',','')}_from_{erase_from.lower().replace(' ','').replace(',','')}-{train_method}_{negative_guidance}-epochs_{iterations}"
+    if lora == True:
+        name += "_lora"
     if not os.path.exists(args.save_path):
         os.makedirs(args.save_path, exist_ok = True)
     save_path = f'{args.save_path}/{name}.pt'
     device = args.device
-    train(erase_concept=erase_concept, erase_from=erase_from, train_method=train_method, iterations=iterations, negative_guidance=negative_guidance, lr=lr, save_path=save_path, device=device)
+    train(erase_concept=erase_concept, erase_from=erase_from, train_method=train_method, iterations=iterations, negative_guidance=negative_guidance, lr=lr, save_path=save_path, device=device, lora=lora)
