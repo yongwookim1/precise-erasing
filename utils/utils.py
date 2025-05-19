@@ -342,17 +342,51 @@ class FineTunedModel(torch.nn.Module):
                  train_method,
                  lora_rank=None,
                  lora_alpha=1.0,
+                 lora_init_prompt=None,
                  ):
 
         super().__init__()
-
         self.model = model
         self.ft_modules = {}
         self.orig_modules = {}
         self.lora_modules = {}
         self.module_forward_hooks = {}
-
         freeze(self.model)
+
+        # collect lora module names
+        lora_module_names = []
+        for module_name, module in model.named_modules():
+            if 'unet' not in module_name:
+                continue
+            if module.__class__.__name__ in ["Linear", "Conv2d", "LoRACompatibleLinear", "LoRACompatibleConv"]:
+                if train_method == 'xattn':
+                    if 'attn2' not in module_name:
+                        continue
+                elif train_method == 'xattn-strict':
+                    if 'attn2' not in module_name or 'to_q' not in module_name or 'to_k' not in module_name:
+                        continue
+                elif train_method == 'noxattn':
+                    if 'attn2' in module_name:
+                        continue 
+                elif train_method == 'selfattn':
+                    if 'attn1' not in module_name:
+                        continue
+                elif train_method == 'full':
+                    pass
+                else:
+                    raise NotImplementedError(
+                        f"train_method: {train_method} is not implemented."
+                    )
+                lora_module_names.append(module_name)
+
+        fisher_info_dict = None
+        if lora_rank is not None and lora_init_prompt is not None:
+            tokenizer = self.model.tokenizer
+            text_encoder = self.model.text_encoder
+            device = next(self.model.parameters()).device
+            fisher_info_dict = self.compute_fisher_information(
+                model, lora_init_prompt, tokenizer, text_encoder, device, lora_module_names
+            )
 
         for module_name, module in model.named_modules():
             if 'unet' not in module_name:
@@ -376,16 +410,18 @@ class FineTunedModel(torch.nn.Module):
                     raise NotImplementedError(
                         f"train_method: {train_method} is not implemented."
                     )
-                print(module_name)
+
                 ft_module = copy.deepcopy(module)
                     
                 self.orig_modules[module_name] = module
                 self.ft_modules[module_name] = ft_module
 
                 unfreeze(ft_module)
-
+                fisher_info = None
+                if fisher_info_dict is not None:
+                    fisher_info = fisher_info_dict.get(module_name, None)
                 if lora_rank is not None:
-                    lora_module = self._create_lora_module(module, lora_rank, lora_alpha)
+                    lora_module = self._create_lora_module(module, lora_rank, lora_alpha, fisher_info)
                     self.lora_modules[module_name] = lora_module
                     unfreeze(lora_module)
 
@@ -393,16 +429,22 @@ class FineTunedModel(torch.nn.Module):
         self.orig_modules_list = torch.nn.ModuleList(self.orig_modules.values())
         self.lora_modules_list = torch.nn.ModuleList(self.lora_modules.values())
 
-    def _create_lora_module(self, module, rank, alpha):
+    def _create_lora_module(self, module, rank, alpha, fisher_info=None):
         device = module.weight.device
         
         if isinstance(module, torch.nn.Linear):
-            lora_down = torch.nn.Linear(module.in_features, rank, bias=False)
-            lora_up = torch.nn.Linear(rank, module.out_features, bias=False)
-            
-            torch.nn.init.normal_(lora_down.weight, std=1.0/rank)
-            torch.nn.init.zeros_(lora_up.weight)
-            
+            lora_down = torch.nn.Linear(module.in_features, rank, bias=False).to(device)
+            lora_up = torch.nn.Linear(rank, module.out_features, bias=False).to(device)
+            if fisher_info is not None:
+                down_fisher = fisher_info.abs().mean(dim=0)
+                up_fisher = fisher_info.abs().mean(dim=1)
+                torch.nn.init.normal_(lora_down.weight, std=1.0/rank)
+                lora_down.weight.data *= down_fisher
+                torch.nn.init.zeros_(lora_up.weight)
+                lora_up.weight.data += up_fisher.unsqueeze(1)
+            else:
+                torch.nn.init.normal_(lora_down.weight, std=1.0/rank)
+                torch.nn.init.zeros_(lora_up.weight)
             lora_down = lora_down.to(device)
             lora_up = lora_up.to(device)
             
@@ -412,7 +454,12 @@ class FineTunedModel(torch.nn.Module):
                 alpha=alpha,
                 rank=rank
             )
-            
+            # calibrate the output
+            with torch.no_grad():
+                scale = alpha / rank
+                lora_equiv = torch.matmul(lora_up.weight, lora_down.weight) * scale  # [out, in]
+                module.weight.data -= lora_equiv
+        
         elif isinstance(module, torch.nn.Conv2d):
             lora_down = torch.nn.Conv2d(
                 module.in_channels, rank, 
@@ -422,10 +469,16 @@ class FineTunedModel(torch.nn.Module):
                 rank, module.out_channels,
                 kernel_size=1, padding=0, bias=False
             )
-            
-            torch.nn.init.normal_(lora_down.weight, std=1.0/rank)
-            torch.nn.init.zeros_(lora_up.weight)
-            
+            if fisher_info is not None:
+                down_fisher = fisher_info.abs().mean(dim=(0,2,3))[:rank].to(device)
+                up_fisher = fisher_info.abs().mean(dim=(1,2,3))[:rank].to(device)
+                torch.nn.init.normal_(lora_down.weight, std=1.0/rank)
+                lora_down.weight.data *= down_fisher.view(1, -1, 1, 1)
+                torch.nn.init.zeros_(lora_up.weight)
+                lora_up.weight.data += up_fisher.view(-1, 1, 1, 1)
+            else:
+                torch.nn.init.normal_(lora_down.weight, std=1.0/rank)
+                torch.nn.init.zeros_(lora_up.weight)
             lora_down = lora_down.to(device)
             lora_up = lora_up.to(device)
             
@@ -435,17 +488,87 @@ class FineTunedModel(torch.nn.Module):
                 alpha=alpha,
                 rank=rank
             )
+            
+            # calibrate the output
+            with torch.no_grad():
+                scale = alpha / rank
+                lora_down_w = lora_down.weight.squeeze(-1).squeeze(-1)
+                lora_up_w = lora_up.weight.squeeze(-1).squeeze(-1)
+                lora_equiv = torch.matmul(lora_up_w, lora_down_w) * scale
+                module.weight.data -= lora_equiv.unsqueeze(-1).unsqueeze(-1)
         else:
             raise NotImplementedError(f"LoRA is not implemented for {type(module)}")
-        
         return lora_module
 
+    @staticmethod
+    def compute_fisher_information(model, prompt, tokenizer, text_encoder, device, module_names):
+        fisher_info = {name: torch.zeros_like(dict(model.named_modules())[name].weight) for name in module_names}
+        diffuser = model
+        diffuser.eval()
+        criteria = torch.nn.MSELoss()
+        iterations = 20
+        nsteps = 50
+        prompt = [prompt]
+        
+        for i in tqdm(range(iterations)):
+            with torch.no_grad():
+                index = np.random.choice(len(prompt), 1, replace=False)[0]
+                erase_concept_sampled = prompt[index]
+                
+                
+                neutral_text_embeddings = diffuser.get_text_embeddings([''],n_imgs=1)
+                positive_text_embeddings = diffuser.get_text_embeddings([erase_concept_sampled[0]],n_imgs=1)
+                target_text_embeddings = diffuser.get_text_embeddings([erase_concept_sampled[1]],n_imgs=1)
+            
+
+                diffuser.set_scheduler_timesteps(nsteps)
+
+                iteration = torch.randint(1, nsteps - 1, (1,)).item()
+
+                latents = diffuser.get_initial_latents(1, 512, 1)
+
+
+                latents_steps, _ = diffuser.diffusion(
+                    latents,
+                    positive_text_embeddings,
+                    start_iteration=0,
+                    end_iteration=iteration,
+                    guidance_scale=3, 
+                    show_progress=False
+                )
+
+                diffuser.set_scheduler_timesteps(1000)
+
+                iteration = int(iteration / nsteps * 1000)
+                
+                positive_latents = diffuser.predict_noise(iteration, latents_steps[0], positive_text_embeddings, guidance_scale=1)
+                neutral_latents = diffuser.predict_noise(iteration, latents_steps[0], neutral_text_embeddings, guidance_scale=1)
+                target_latents = diffuser.predict_noise(iteration, latents_steps[0], target_text_embeddings, guidance_scale=1)
+                if erase_concept_sampled[0] == erase_concept_sampled[1]:
+                    target_latents = neutral_latents.clone().detach()
+            
+            negative_latents = diffuser.predict_noise(iteration, latents_steps[0], target_text_embeddings, guidance_scale=1)
+
+            positive_latents.requires_grad = True
+            neutral_latents.requires_grad = True
+            
+            loss = criteria(negative_latents, target_latents - (1*(positive_latents - neutral_latents)))
+            
+            loss.backward()
+            for name in module_names:
+                module = dict(model.named_modules())[name]
+                if hasattr(module, 'weight') and module.weight.grad is not None:
+                    fisher_info[name] += module.weight.grad.data.pow(2)
+        for name in fisher_info:
+            fisher_info[name] /= iterations
+        return fisher_info
+    
     @classmethod
-    def from_checkpoint(cls, model, checkpoint, train_method, lora_rank=None, lora_alpha=1.0):
+    def from_checkpoint(cls, model, checkpoint, train_method, lora_rank=None, lora_alpha=1.0, lora_init_prompt=None):
         if isinstance(checkpoint, str):
             checkpoint = torch.load(checkpoint)
 
-        ftm = FineTunedModel(model, train_method=train_method, lora_rank=lora_rank, lora_alpha=lora_alpha)
+        ftm = FineTunedModel(model, train_method=train_method, lora_rank=lora_rank, lora_alpha=lora_alpha, lora_init_prompt=lora_init_prompt)
         ftm.load_state_dict(checkpoint)
 
         return ftm
