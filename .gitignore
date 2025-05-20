@@ -1,7 +1,7 @@
 #
 models/
 NSFW/
-SD.py
+test.py
 requirements.txt
 
 # Created by https://www.toptal.com/developers/gitignore/api/linux,python
