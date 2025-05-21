@@ -119,10 +119,37 @@ def train(erase_concept, erase_from, train_method, iterations, negative_guidance
         neutral_latents.requires_grad = False
         
 
+        # check the parameter change
+        if lora and i % 1 == 0:
+            if finetuner.lora_modules:
+                first_lora_key = list(finetuner.lora_modules.keys())[0]
+                lora_module = finetuner.lora_modules[first_lora_key]
+                before_up_weight = lora_module.lora_up.weight.data.clone()
+                before_down_weight = lora_module.lora_down.weight.data.clone()
+                
+                first_ft_key = list(finetuner.ft_modules.keys())[0]
+                ft_module = finetuner.ft_modules[first_ft_key]
+                before_ft_weight = ft_module.weight.data.clone()
+        
         loss = criteria(negative_latents, target_latents - (negative_guidance*(positive_latents - neutral_latents))) 
         
         loss.backward()
         optimizer.step()
+        
+        # parameter 
+        if lora and i % 1 == 0 and finetuner.lora_modules:
+            after_up_weight = lora_module.lora_up.weight.data.clone()
+            after_down_weight = lora_module.lora_down.weight.data.clone()
+            after_ft_weight = ft_module.weight.data.clone()
+            
+            lora_up_diff = (after_up_weight - before_up_weight).abs().mean().item()
+            lora_down_diff = (after_down_weight - before_down_weight).abs().mean().item()
+            ft_diff = (after_ft_weight - before_ft_weight).abs().mean().item()
+            
+            print(f"\nIteration {i}:")
+            print(f"LoRA A: {lora_up_diff:.8f}")
+            print(f"LoRA B: {lora_down_diff:.8f}")
+            print(f"Freezed module: {ft_diff:.8f}")
 
     torch.save(finetuner.state_dict(), save_path)
 

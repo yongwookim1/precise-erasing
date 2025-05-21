@@ -385,7 +385,7 @@ class FineTunedModel(torch.nn.Module):
                 model, lora_init_prompt, lora_module_names
             )
 
-        for module_name, module in tqdm(model.named_modules()):
+        for module_name, module in model.named_modules():
             if 'unet' not in module_name:
                 continue
             if module.__class__.__name__ in ["Linear", "Conv2d", "LoRACompatibleLinear", "LoRACompatibleConv"]:
@@ -412,8 +412,12 @@ class FineTunedModel(torch.nn.Module):
                     
                 self.orig_modules[module_name] = module
                 self.ft_modules[module_name] = ft_module
+                
+                if lora_rank is None:
+                    unfreeze(ft_module)
+                else:
+                    freeze(ft_module)
 
-                unfreeze(ft_module)
                 fisher_info = None
                 if fisher_info_dict is not None:
                     fisher_info = fisher_info_dict.get(module_name, None)
@@ -487,27 +491,35 @@ class FineTunedModel(torch.nn.Module):
 
                 U_tensor, S_tensor, VT_tensor = torch.linalg.svd(DW_tensor, full_matrices=False)
 
-                sqrtS_tensor = torch.diag(torch.sqrt(S_tensor[:rank]))
+                eff_rank = min(rank, S_tensor.shape[0])
+
+                sqrtS_tensor_diag = torch.diag(torch.sqrt(S_tensor[:eff_rank]))
                 sqrtD_inv_tensor = torch.diag(1.0 / torch.sqrt(torch.tensor(row_importance, device=device)))
-                B_tensor = torch.matmul(torch.matmul(sqrtD_inv_tensor, U_tensor[:, :rank]), sqrtS_tensor)
-                A_tensor = torch.matmul(sqrtS_tensor, VT_tensor[:rank, :])
+                
+                A_tensor = torch.matmul(sqrtS_tensor_diag, VT_tensor[:eff_rank, :])
+                B_tensor = torch.matmul(torch.matmul(sqrtD_inv_tensor, U_tensor[:, :eff_rank]), sqrtS_tensor_diag)
 
                 W_star_tensor = W2d_tensor - torch.matmul(B_tensor, A_tensor)
-
-                A_reshaped = A_tensor.reshape(rank, in_c, kh, kw)
-                B_reshaped = B_tensor.reshape(out_c, rank, 1, 1)
+                
+                A_reshaped = A_tensor.reshape(eff_rank, in_c, kh, kw)
+                B_reshaped = B_tensor.reshape(out_c, eff_rank, 1, 1)
                 W_star_reshaped = W_star_tensor.reshape(out_c, in_c, kh, kw)
 
                 lora_down = torch.nn.Conv2d(
-                    module.in_channels, rank, 
-                    kernel_size=1, padding=0, bias=False
+                    module.in_channels, eff_rank, 
+                    kernel_size=(kh, kw),
+                    padding=module.padding,
+                    stride=module.stride,
+                    bias=False
                 ).to(device)
+                
                 lora_up = torch.nn.Conv2d(
-                    rank, module.out_channels,
+                    eff_rank, module.out_channels,
                     kernel_size=1, padding=0, bias=False
                 ).to(device)
-                lora_down.weight.data = A_reshaped
-                lora_up.weight.data = B_reshaped
+                
+                lora_down.weight.data.copy_(A_reshaped)
+                lora_up.weight.data.copy_(B_reshaped)
 
                 module.weight.data.copy_(W_star_reshaped)
             else:
