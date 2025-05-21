@@ -17,61 +17,61 @@ from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
 from diffusers.schedulers.scheduling_lms_discrete import LMSDiscreteScheduler
 from diffusers.pipelines.stable_diffusion import StableDiffusionSafetyChecker
 
-def to_gif(images, path):
+# def to_gif(images, path):
 
-    images[0].save(path, save_all=True,
-                   append_images=images[1:], loop=0, duration=len(images) * 20)
+#     images[0].save(path, save_all=True,
+#                    append_images=images[1:], loop=0, duration=len(images) * 20)
 
-def figure_to_image(figure):
+# def figure_to_image(figure):
 
-    figure.set_dpi(300)
+#     figure.set_dpi(300)
 
-    figure.canvas.draw()
+#     figure.canvas.draw()
 
-    return Image.frombytes('RGB', figure.canvas.get_width_height(), figure.canvas.tostring_rgb())
+#     return Image.frombytes('RGB', figure.canvas.get_width_height(), figure.canvas.tostring_rgb())
 
-def image_grid(images, outpath=None, column_titles=None, row_titles=None):
+# def image_grid(images, outpath=None, column_titles=None, row_titles=None):
 
-    n_rows = len(images)
-    n_cols = len(images[0])
+#     n_rows = len(images)
+#     n_cols = len(images[0])
 
-    fig, axs = plt.subplots(nrows=n_rows, ncols=n_cols,
-                            figsize=(n_cols, n_rows), squeeze=False)
+#     fig, axs = plt.subplots(nrows=n_rows, ncols=n_cols,
+#                             figsize=(n_cols, n_rows), squeeze=False)
 
-    for row, _images in enumerate(images):
+#     for row, _images in enumerate(images):
 
-        for column, image in enumerate(_images):
-            ax = axs[row][column]
-            ax.imshow(image)
-            if column_titles and row == 0:
-                ax.set_title(textwrap.fill(
-                    column_titles[column], width=12), fontsize='x-small')
-            if row_titles and column == 0:
-                ax.set_ylabel(row_titles[row], rotation=0, fontsize='x-small', labelpad=1.6 * len(row_titles[row]))
-            ax.set_xticks([])
-            ax.set_yticks([])
+#         for column, image in enumerate(_images):
+#             ax = axs[row][column]
+#             ax.imshow(image)
+#             if column_titles and row == 0:
+#                 ax.set_title(textwrap.fill(
+#                     column_titles[column], width=12), fontsize='x-small')
+#             if row_titles and column == 0:
+#                 ax.set_ylabel(row_titles[row], rotation=0, fontsize='x-small', labelpad=1.6 * len(row_titles[row]))
+#             ax.set_xticks([])
+#             ax.set_yticks([])
 
-    plt.subplots_adjust(wspace=0, hspace=0)
+#     plt.subplots_adjust(wspace=0, hspace=0)
 
-    if outpath is not None:
-        plt.savefig(outpath, bbox_inches='tight', dpi=300)
-        plt.close()
-    else:
-        plt.tight_layout(pad=0)
-        image = figure_to_image(plt.gcf())
-        plt.close()
-        return image
+#     if outpath is not None:
+#         plt.savefig(outpath, bbox_inches='tight', dpi=300)
+#         plt.close()
+#     else:
+#         plt.tight_layout(pad=0)
+#         image = figure_to_image(plt.gcf())
+#         plt.close()
+#         return image
 
-def get_module(module, module_name):
+# def get_module(module, module_name):
 
-    if isinstance(module_name, str):
-        module_name = module_name.split('.')
+#     if isinstance(module_name, str):
+#         module_name = module_name.split('.')
 
-    if len(module_name) == 0:
-        return module
-    else:
-        module = getattr(module, module_name[0])
-        return get_module(module, module_name[1:])
+#     if len(module_name) == 0:
+#         return module
+#     else:
+#         module = getattr(module, module_name[0])
+#         return get_module(module, module_name[1:])
 
 def set_module(module, module_name, new_module):
 
@@ -96,17 +96,17 @@ def unfreeze(module):
 
         parameter.requires_grad = True
 
-def get_concat_h(im1, im2):
-    dst = Image.new('RGB', (im1.width + im2.width, im1.height))
-    dst.paste(im1, (0, 0))
-    dst.paste(im2, (im1.width, 0))
-    return dst
+# def get_concat_h(im1, im2):
+#     dst = Image.new('RGB', (im1.width + im2.width, im1.height))
+#     dst.paste(im1, (0, 0))
+#     dst.paste(im2, (im1.width, 0))
+#     return dst
 
-def get_concat_v(im1, im2):
-    dst = Image.new('RGB', (im1.width, im1.height + im2.height))
-    dst.paste(im1, (0, 0))
-    dst.paste(im2, (0, im1.height))
-    return dst
+# def get_concat_v(im1, im2):
+#     dst = Image.new('RGB', (im1.width, im1.height + im2.height))
+#     dst.paste(im1, (0, 0))
+#     dst.paste(im2, (0, im1.height))
+#     return dst
 
 class StableDiffuser(torch.nn.Module):
 
@@ -116,22 +116,22 @@ class StableDiffuser(torch.nn.Module):
 
         super().__init__()
 
-        # Load the autoencoder model which will be used to decode the latents into image space.
+        # load the autoencoder model which will be used to decode the latents into image space.
         self.vae = AutoencoderKL.from_pretrained(
             "CompVis/stable-diffusion-v1-4", subfolder="vae")
         
-        # Load the tokenizer and text encoder to tokenize and encode the text.
+        # load the tokenizer and text encoder to tokenize and encode the text.
         self.tokenizer = CLIPTokenizer.from_pretrained(
             "openai/clip-vit-large-patch14")
         self.text_encoder = CLIPTextModel.from_pretrained(
             "openai/clip-vit-large-patch14")
         
-        # The UNet model for generating the latents.
+        # UNet model for generating the latents.
         self.unet = UNet2DConditionModel.from_pretrained(
             "CompVis/stable-diffusion-v1-4", subfolder="unet")
         
         self.feature_extractor = CLIPFeatureExtractor.from_pretrained("CompVis/stable-diffusion-v1-4", subfolder="feature_extractor")
-        self.safety_checker = StableDiffusionSafetyChecker.from_pretrained("CompVis/stable-diffusion-v1-4", subfolder="safety_checker")
+        # self.safety_checker = StableDiffusionSafetyChecker.from_pretrained("CompVis/stable-diffusion-v1-4", subfolder="safety_checker")
 
         if scheduler == 'LMS':
             self.scheduler = LMSDiscreteScheduler(beta_start=0.00085, beta_end=0.012, beta_schedule="scaled_linear", num_train_timesteps=1000)
@@ -381,14 +381,11 @@ class FineTunedModel(torch.nn.Module):
 
         fisher_info_dict = None
         if lora_rank is not None and lora_init_prompt is not None:
-            tokenizer = self.model.tokenizer
-            text_encoder = self.model.text_encoder
-            device = next(self.model.parameters()).device
             fisher_info_dict = self.compute_fisher_information(
-                model, lora_init_prompt, tokenizer, text_encoder, device, lora_module_names
+                model, lora_init_prompt, lora_module_names
             )
 
-        for module_name, module in model.named_modules():
+        for module_name, module in tqdm(model.named_modules()):
             if 'unet' not in module_name:
                 continue
             if module.__class__.__name__ in ["Linear", "Conv2d", "LoRACompatibleLinear", "LoRACompatibleConv"]:
@@ -433,52 +430,145 @@ class FineTunedModel(torch.nn.Module):
         device = module.weight.device
         
         if isinstance(module, torch.nn.Linear):
-            lora_down = torch.nn.Linear(module.in_features, rank, bias=False).to(device)
-            lora_up = torch.nn.Linear(rank, module.out_features, bias=False).to(device)
             if fisher_info is not None:
-                down_fisher = fisher_info.abs().mean(dim=0)
-                up_fisher = fisher_info.abs().mean(dim=1)
-                torch.nn.init.normal_(lora_down.weight, std=1.0/rank)
-                lora_down.weight.data *= down_fisher
-                torch.nn.init.zeros_(lora_up.weight)
-                lora_up.weight.data += up_fisher.unsqueeze(1)
+                W = module.weight.data.detach().cpu().numpy()
+                F = fisher_info.detach().cpu().numpy()
+                row_importance = np.sqrt(np.sum(F, axis=1) + 1e-12)
+                row_importance[row_importance == 0] = 1.0
+                D = np.diag(row_importance)
+                
+                try:
+                    W_tensor = torch.tensor(W, device=device)
+                    D_tensor = torch.tensor(D, device=device)
+                    DW_tensor = torch.matmul(D_tensor, W_tensor)
+
+                    U_tensor, S_tensor, VT_tensor = torch.linalg.svd(DW_tensor, full_matrices=False)
+                    
+                    sqrtS_tensor = torch.diag(torch.sqrt(S_tensor[:rank]))
+                    sqrtD_inv_tensor = torch.diag(1.0 / torch.sqrt(torch.tensor(row_importance, device=device)))
+                    B_tensor = torch.matmul(torch.matmul(sqrtD_inv_tensor, U_tensor[:, :rank]), sqrtS_tensor)
+                    A_tensor = torch.matmul(sqrtS_tensor, VT_tensor[:rank, :])
+                    
+                    W_star_tensor = W_tensor - torch.matmul(B_tensor, A_tensor)
+
+                    lora_down = torch.nn.Linear(module.in_features, rank, bias=False).to(device)
+                    lora_up = torch.nn.Linear(rank, module.out_features, bias=False).to(device)
+                    lora_down.weight.data = A_tensor
+                    lora_up.weight.data = B_tensor
+
+                    module.weight.data.copy_(W_star_tensor)
+                except Exception as e:
+                    print(f"GPU computation error: {str(e)}")
+                    W = module.weight.data.detach().cpu().numpy()
+                    DW = D @ W
+                    try:
+                        U, S, VT = np.linalg.svd(DW, full_matrices=False)
+                    except Exception:
+                        assert "SVD computation error"
+                    # FILA closed-form solution
+                    sqrtS = np.diag(np.sqrt(S[:rank]))
+                    B = np.linalg.inv(np.sqrt(D)) @ U[:, :rank] @ sqrtS
+                    A = sqrtS @ VT[:rank, :]
+                    
+                    lora_down = torch.nn.Linear(module.in_features, rank, bias=False).to(device)
+                    lora_up = torch.nn.Linear(rank, module.out_features, bias=False).to(device)
+                    lora_down.weight.data = torch.from_numpy(A).to(device)
+                    lora_up.weight.data = torch.from_numpy(B).to(device)
+
+                    W_star = W - (B @ A)
+                    module.weight.data.copy_(torch.from_numpy(W_star).to(device))
             else:
+                lora_down = torch.nn.Linear(module.in_features, rank, bias=False).to(device)
+                lora_up = torch.nn.Linear(rank, module.out_features, bias=False).to(device)
                 torch.nn.init.normal_(lora_down.weight, std=1.0/rank)
                 torch.nn.init.zeros_(lora_up.weight)
+
             lora_down = lora_down.to(device)
             lora_up = lora_up.to(device)
-            
             lora_module = LoRAModule(
                 lora_down=lora_down,
                 lora_up=lora_up,
                 alpha=alpha,
                 rank=rank
             )
-            # calibrate the output
-            with torch.no_grad():
-                scale = alpha / rank
-                lora_equiv = torch.matmul(lora_up.weight, lora_down.weight) * scale  # [out, in]
-                module.weight.data -= lora_equiv
-        
         elif isinstance(module, torch.nn.Conv2d):
-            lora_down = torch.nn.Conv2d(
-                module.in_channels, rank, 
-                kernel_size=1, padding=0, bias=False
-            )
-            lora_up = torch.nn.Conv2d(
-                rank, module.out_channels,
-                kernel_size=1, padding=0, bias=False
-            )
             if fisher_info is not None:
-                down_fisher = fisher_info.abs().mean(dim=(0,2,3))[:rank].to(device)
-                up_fisher = fisher_info.abs().mean(dim=(1,2,3))[:rank].to(device)
-                torch.nn.init.normal_(lora_down.weight, std=1.0/rank)
-                lora_down.weight.data *= down_fisher.view(1, -1, 1, 1)
-                torch.nn.init.zeros_(lora_up.weight)
-                lora_up.weight.data += up_fisher.view(-1, 1, 1, 1)
+                W = module.weight.data.detach().cpu().numpy()
+                F = fisher_info.detach().cpu().numpy()
+                out_c, in_c, kh, kw = W.shape
+                W2d = W.reshape(out_c, -1)
+                F2d = F.reshape(out_c, -1)
+                row_importance = np.sqrt(np.sum(F2d, axis=1) + 1e-12)
+                row_importance[row_importance == 0] = 1.0
+                D = np.diag(row_importance)
+                
+
+                try:
+
+                    W2d_tensor = torch.tensor(W2d, device=device)
+                    D_tensor = torch.tensor(D, device=device)
+                    DW_tensor = torch.matmul(D_tensor, W2d_tensor)
+
+                    U_tensor, S_tensor, VT_tensor = torch.linalg.svd(DW_tensor, full_matrices=False)
+
+                    sqrtS_tensor = torch.diag(torch.sqrt(S_tensor[:rank]))
+                    sqrtD_inv_tensor = torch.diag(1.0 / torch.sqrt(torch.tensor(row_importance, device=device)))
+                    B_tensor = torch.matmul(torch.matmul(sqrtD_inv_tensor, U_tensor[:, :rank]), sqrtS_tensor)
+                    A_tensor = torch.matmul(sqrtS_tensor, VT_tensor[:rank, :])
+
+                    W_star_tensor = W2d_tensor - torch.matmul(B_tensor, A_tensor)
+
+                    A_reshaped = A_tensor.reshape(rank, in_c, kh, kw)
+                    B_reshaped = B_tensor.reshape(out_c, rank, 1, 1)
+                    W_star_reshaped = W_star_tensor.reshape(out_c, in_c, kh, kw)
+
+                    lora_down = torch.nn.Conv2d(
+                        module.in_channels, rank, 
+                        kernel_size=1, padding=0, bias=False
+                    ).to(device)
+                    lora_up = torch.nn.Conv2d(
+                        rank, module.out_channels,
+                        kernel_size=1, padding=0, bias=False
+                    ).to(device)
+                    lora_down.weight.data = A_reshaped
+                    lora_up.weight.data = B_reshaped
+
+                    module.weight.data.copy_(W_star_reshaped)
+                except Exception as e:
+                    print(f"GPU computation error: {str(e)}")
+                    DW = D @ W2d
+                    try:
+                        U, S, VT = np.linalg.svd(DW, full_matrices=False)
+                    except Exception:
+                        assert "SVD computation error"
+                    sqrtS = np.diag(np.sqrt(S[:rank]))
+                    B = np.linalg.inv(np.sqrt(D)) @ U[:, :rank] @ sqrtS
+                    A = sqrtS @ VT[:rank, :]
+                    lora_down = torch.nn.Conv2d(
+                        module.in_channels, rank, 
+                        kernel_size=1, padding=0, bias=False
+                    ).to(device)
+                    lora_up = torch.nn.Conv2d(
+                        rank, module.out_channels,
+                        kernel_size=1, padding=0, bias=False
+                    ).to(device)
+                    lora_down.weight.data = torch.from_numpy(A.reshape(rank, in_c, kh, kw)).to(device)
+                    lora_up.weight.data = torch.from_numpy(B.reshape(out_c, rank, 1, 1)).to(device)
+
+                    W_star = W2d - (B @ A)
+                    module.weight.data.copy_(torch.from_numpy(W_star.reshape(out_c, in_c, kh, kw)).to(device))
             else:
+                lora_down = torch.nn.Conv2d(
+                    module.in_channels, rank, 
+                    kernel_size=1, padding=0, bias=False
+                )
+                lora_up = torch.nn.Conv2d(
+                    rank, module.out_channels,
+                    kernel_size=1, padding=0, bias=False
+                )
                 torch.nn.init.normal_(lora_down.weight, std=1.0/rank)
                 torch.nn.init.zeros_(lora_up.weight)
+
             lora_down = lora_down.to(device)
             lora_up = lora_up.to(device)
             
@@ -488,25 +578,17 @@ class FineTunedModel(torch.nn.Module):
                 alpha=alpha,
                 rank=rank
             )
-            
-            # calibrate the output
-            with torch.no_grad():
-                scale = alpha / rank
-                lora_down_w = lora_down.weight.squeeze(-1).squeeze(-1)
-                lora_up_w = lora_up.weight.squeeze(-1).squeeze(-1)
-                lora_equiv = torch.matmul(lora_up_w, lora_down_w) * scale
-                module.weight.data -= lora_equiv.unsqueeze(-1).unsqueeze(-1)
         else:
             raise NotImplementedError(f"LoRA is not implemented for {type(module)}")
         return lora_module
 
     @staticmethod
-    def compute_fisher_information(model, prompt, tokenizer, text_encoder, device, module_names):
+    def compute_fisher_information(model, prompt, module_names):
         fisher_info = {name: torch.zeros_like(dict(model.named_modules())[name].weight) for name in module_names}
         diffuser = model
         diffuser.eval()
         criteria = torch.nn.MSELoss()
-        iterations = 20
+        iterations = 10
         nsteps = 50
         prompt = [prompt]
         
@@ -586,17 +668,16 @@ class FineTunedModel(torch.nn.Module):
         for key, ft_module in self.ft_modules.items():
             set_module(self.model, key, ft_module)
 
-        # register the LoRA hook
         for handle in self.module_forward_hooks.values():
             handle.remove()
         self.module_forward_hooks = {}
             
         # register the forward hook
         if self.lora_modules:
-            for module_name, orig_module in self.orig_modules.items():
+            for module_name, ft_module in self.ft_modules.items():
                 if module_name in self.lora_modules:
                     hook = self._hook_factory(module_name)
-                    handle = orig_module.register_forward_hook(hook)
+                    handle = ft_module.register_forward_hook(hook)
                     self.module_forward_hooks[module_name] = handle
 
         return self

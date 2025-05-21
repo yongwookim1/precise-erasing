@@ -144,18 +144,18 @@ if __name__ == '__main__':
     parser.add_argument('--save_path', help='Path to save model', type=str, default='models/')
     parser.add_argument('--device', help='cuda device to train on', type=str, required=False, default='cuda:0')
     parser.add_argument('--lora', help='finetuning using lora', action='store_true')
-    parser.add_argument('--lora_init', help='lora initialization', action='store_true', default= False)
+    parser.add_argument('--lora_init', help='lora initialization', action='store_true', default=False)
 
     args = parser.parse_args()
     
-    prompt = args.erase_concept #'car'
+    prompt = args.erase_concept
     erase_concept = args.erase_concept
     erase_from = args.erase_from
     if erase_from is None:
         erase_from = erase_concept
     train_method = args.train_method #'noxattn'
-    iterations = args.iterations #200
-    negative_guidance = args.negative_guidance #1
+    iterations = args.iterations
+    negative_guidance = args.negative_guidance
     lr = args.lr #1e-5
     lora = args.lora
     lora_init = args.lora_init
