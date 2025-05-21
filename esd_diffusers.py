@@ -17,8 +17,7 @@ from diffusers.schedulers.scheduling_lms_discrete import LMSDiscreteScheduler
 from diffusers.pipelines.stable_diffusion import StableDiffusionSafetyChecker
 from utils.utils import *
 
-def train(erase_concept, erase_from, train_method, iterations, negative_guidance, lr, save_path, device, lora, lora_init):
-  
+def train(erase_concept, erase_from, train_method, iterations, negative_guidance, lr, save_path, device, lora, lora_rank, lora_init):
     nsteps = 50
 
     diffuser = StableDiffuser(scheduler='DDIM').to(device)
@@ -31,14 +30,14 @@ def train(erase_concept, erase_from, train_method, iterations, negative_guidance
         finetuner = FineTunedModel(
             model=diffuser,
             train_method=train_method,
-            lora_rank=4,
+            lora_rank=lora_rank,
             lora_alpha=1.0,
         )
     else:
         finetuner = FineTunedModel(
             model=diffuser,
             train_method=train_method,
-            lora_rank=4,
+            lora_rank=lora_rank,
             lora_alpha=1.0,
             lora_init_prompt=erase_concept
         )
@@ -143,7 +142,8 @@ if __name__ == '__main__':
     parser.add_argument('--negative_guidance', help='Negative guidance value', type=float, required=False, default=1)
     parser.add_argument('--save_path', help='Path to save model', type=str, default='models/')
     parser.add_argument('--device', help='cuda device to train on', type=str, required=False, default='cuda:0')
-    parser.add_argument('--lora', help='finetuning using lora', action='store_true')
+    parser.add_argument('--lora', help='finetuning using lora', action='store_true', default=False)
+    parser.add_argument('--lora_rank', help='rank of lora', type=int, default=4)
     parser.add_argument('--lora_init', help='lora initialization', action='store_true', default=False)
 
     args = parser.parse_args()
@@ -153,19 +153,21 @@ if __name__ == '__main__':
     erase_from = args.erase_from
     if erase_from is None:
         erase_from = erase_concept
-    train_method = args.train_method #'noxattn'
+    train_method = args.train_method
     iterations = args.iterations
     negative_guidance = args.negative_guidance
     lr = args.lr #1e-5
     lora = args.lora
     lora_init = args.lora_init
+    lora_rank = args.lora_rank
     name = f"esd-{erase_concept.lower().replace(' ','').replace(',','')}_from_{erase_from.lower().replace(' ','').replace(',','')}-{train_method}_{negative_guidance}-epochs_{iterations}"
     if lora == True:
         name += "_lora"
+        name += f"_rank_{lora_rank}"
     if lora_init == True:
         name += "_init"
     if not os.path.exists(args.save_path):
         os.makedirs(args.save_path, exist_ok=True)
     save_path = f'{args.save_path}/{name}.pt'
     device = args.device
-    train(erase_concept=erase_concept, erase_from=erase_from, train_method=train_method, iterations=iterations, negative_guidance=negative_guidance, lr=lr, save_path=save_path, device=device, lora=lora, lora_init=lora_init)
+    train(erase_concept=erase_concept, erase_from=erase_from, train_method=train_method, iterations=iterations, negative_guidance=negative_guidance, lr=lr, save_path=save_path, device=device, lora=lora, lora_rank=lora_rank, lora_init=lora_init)

@@ -437,46 +437,25 @@ class FineTunedModel(torch.nn.Module):
                 row_importance[row_importance == 0] = 1.0
                 D = np.diag(row_importance)
                 
-                try:
-                    W_tensor = torch.tensor(W, device=device)
-                    D_tensor = torch.tensor(D, device=device)
-                    DW_tensor = torch.matmul(D_tensor, W_tensor)
+                W_tensor = torch.tensor(W, device=device)
+                D_tensor = torch.tensor(D, device=device)
+                DW_tensor = torch.matmul(D_tensor, W_tensor)
 
-                    U_tensor, S_tensor, VT_tensor = torch.linalg.svd(DW_tensor, full_matrices=False)
-                    
-                    sqrtS_tensor = torch.diag(torch.sqrt(S_tensor[:rank]))
-                    sqrtD_inv_tensor = torch.diag(1.0 / torch.sqrt(torch.tensor(row_importance, device=device)))
-                    B_tensor = torch.matmul(torch.matmul(sqrtD_inv_tensor, U_tensor[:, :rank]), sqrtS_tensor)
-                    A_tensor = torch.matmul(sqrtS_tensor, VT_tensor[:rank, :])
-                    
-                    W_star_tensor = W_tensor - torch.matmul(B_tensor, A_tensor)
+                U_tensor, S_tensor, VT_tensor = torch.linalg.svd(DW_tensor, full_matrices=False)
+                
+                sqrtS_tensor = torch.diag(torch.sqrt(S_tensor[:rank]))
+                sqrtD_inv_tensor = torch.diag(1.0 / torch.sqrt(torch.tensor(row_importance, device=device)))
+                B_tensor = torch.matmul(torch.matmul(sqrtD_inv_tensor, U_tensor[:, :rank]), sqrtS_tensor)
+                A_tensor = torch.matmul(sqrtS_tensor, VT_tensor[:rank, :])
+                
+                W_star_tensor = W_tensor - torch.matmul(B_tensor, A_tensor)
 
-                    lora_down = torch.nn.Linear(module.in_features, rank, bias=False).to(device)
-                    lora_up = torch.nn.Linear(rank, module.out_features, bias=False).to(device)
-                    lora_down.weight.data = A_tensor
-                    lora_up.weight.data = B_tensor
+                lora_down = torch.nn.Linear(module.in_features, rank, bias=False).to(device)
+                lora_up = torch.nn.Linear(rank, module.out_features, bias=False).to(device)
+                lora_down.weight.data = A_tensor
+                lora_up.weight.data = B_tensor
 
-                    module.weight.data.copy_(W_star_tensor)
-                except Exception as e:
-                    print(f"GPU computation error: {str(e)}")
-                    W = module.weight.data.detach().cpu().numpy()
-                    DW = D @ W
-                    try:
-                        U, S, VT = np.linalg.svd(DW, full_matrices=False)
-                    except Exception:
-                        assert "SVD computation error"
-                    # FILA closed-form solution
-                    sqrtS = np.diag(np.sqrt(S[:rank]))
-                    B = np.linalg.inv(np.sqrt(D)) @ U[:, :rank] @ sqrtS
-                    A = sqrtS @ VT[:rank, :]
-                    
-                    lora_down = torch.nn.Linear(module.in_features, rank, bias=False).to(device)
-                    lora_up = torch.nn.Linear(rank, module.out_features, bias=False).to(device)
-                    lora_down.weight.data = torch.from_numpy(A).to(device)
-                    lora_up.weight.data = torch.from_numpy(B).to(device)
-
-                    W_star = W - (B @ A)
-                    module.weight.data.copy_(torch.from_numpy(W_star).to(device))
+                module.weight.data.copy_(W_star_tensor)
             else:
                 lora_down = torch.nn.Linear(module.in_features, rank, bias=False).to(device)
                 lora_up = torch.nn.Linear(rank, module.out_features, bias=False).to(device)
@@ -502,61 +481,35 @@ class FineTunedModel(torch.nn.Module):
                 row_importance[row_importance == 0] = 1.0
                 D = np.diag(row_importance)
                 
+                W2d_tensor = torch.tensor(W2d, device=device)
+                D_tensor = torch.tensor(D, device=device)
+                DW_tensor = torch.matmul(D_tensor, W2d_tensor)
 
-                try:
+                U_tensor, S_tensor, VT_tensor = torch.linalg.svd(DW_tensor, full_matrices=False)
 
-                    W2d_tensor = torch.tensor(W2d, device=device)
-                    D_tensor = torch.tensor(D, device=device)
-                    DW_tensor = torch.matmul(D_tensor, W2d_tensor)
+                sqrtS_tensor = torch.diag(torch.sqrt(S_tensor[:rank]))
+                sqrtD_inv_tensor = torch.diag(1.0 / torch.sqrt(torch.tensor(row_importance, device=device)))
+                B_tensor = torch.matmul(torch.matmul(sqrtD_inv_tensor, U_tensor[:, :rank]), sqrtS_tensor)
+                A_tensor = torch.matmul(sqrtS_tensor, VT_tensor[:rank, :])
 
-                    U_tensor, S_tensor, VT_tensor = torch.linalg.svd(DW_tensor, full_matrices=False)
+                W_star_tensor = W2d_tensor - torch.matmul(B_tensor, A_tensor)
 
-                    sqrtS_tensor = torch.diag(torch.sqrt(S_tensor[:rank]))
-                    sqrtD_inv_tensor = torch.diag(1.0 / torch.sqrt(torch.tensor(row_importance, device=device)))
-                    B_tensor = torch.matmul(torch.matmul(sqrtD_inv_tensor, U_tensor[:, :rank]), sqrtS_tensor)
-                    A_tensor = torch.matmul(sqrtS_tensor, VT_tensor[:rank, :])
+                A_reshaped = A_tensor.reshape(rank, in_c, kh, kw)
+                B_reshaped = B_tensor.reshape(out_c, rank, 1, 1)
+                W_star_reshaped = W_star_tensor.reshape(out_c, in_c, kh, kw)
 
-                    W_star_tensor = W2d_tensor - torch.matmul(B_tensor, A_tensor)
+                lora_down = torch.nn.Conv2d(
+                    module.in_channels, rank, 
+                    kernel_size=1, padding=0, bias=False
+                ).to(device)
+                lora_up = torch.nn.Conv2d(
+                    rank, module.out_channels,
+                    kernel_size=1, padding=0, bias=False
+                ).to(device)
+                lora_down.weight.data = A_reshaped
+                lora_up.weight.data = B_reshaped
 
-                    A_reshaped = A_tensor.reshape(rank, in_c, kh, kw)
-                    B_reshaped = B_tensor.reshape(out_c, rank, 1, 1)
-                    W_star_reshaped = W_star_tensor.reshape(out_c, in_c, kh, kw)
-
-                    lora_down = torch.nn.Conv2d(
-                        module.in_channels, rank, 
-                        kernel_size=1, padding=0, bias=False
-                    ).to(device)
-                    lora_up = torch.nn.Conv2d(
-                        rank, module.out_channels,
-                        kernel_size=1, padding=0, bias=False
-                    ).to(device)
-                    lora_down.weight.data = A_reshaped
-                    lora_up.weight.data = B_reshaped
-
-                    module.weight.data.copy_(W_star_reshaped)
-                except Exception as e:
-                    print(f"GPU computation error: {str(e)}")
-                    DW = D @ W2d
-                    try:
-                        U, S, VT = np.linalg.svd(DW, full_matrices=False)
-                    except Exception:
-                        assert "SVD computation error"
-                    sqrtS = np.diag(np.sqrt(S[:rank]))
-                    B = np.linalg.inv(np.sqrt(D)) @ U[:, :rank] @ sqrtS
-                    A = sqrtS @ VT[:rank, :]
-                    lora_down = torch.nn.Conv2d(
-                        module.in_channels, rank, 
-                        kernel_size=1, padding=0, bias=False
-                    ).to(device)
-                    lora_up = torch.nn.Conv2d(
-                        rank, module.out_channels,
-                        kernel_size=1, padding=0, bias=False
-                    ).to(device)
-                    lora_down.weight.data = torch.from_numpy(A.reshape(rank, in_c, kh, kw)).to(device)
-                    lora_up.weight.data = torch.from_numpy(B.reshape(out_c, rank, 1, 1)).to(device)
-
-                    W_star = W2d - (B @ A)
-                    module.weight.data.copy_(torch.from_numpy(W_star.reshape(out_c, in_c, kh, kw)).to(device))
+                module.weight.data.copy_(W_star_reshaped)
             else:
                 lora_down = torch.nn.Conv2d(
                     module.in_channels, rank, 
