@@ -509,7 +509,6 @@ class FineTunedModel(torch.nn.Module):
                 lora_up.weight.data.copy_(lora_B.reshape(module.out_channels, rank, 1, 1))
 
                 module.weight.data.copy_(W_star)
-                breakpoint()
             else:
                 lora_down = torch.nn.Conv2d(
                     in_channels=module.in_channels,
