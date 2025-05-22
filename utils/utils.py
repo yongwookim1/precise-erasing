@@ -432,37 +432,32 @@ class FineTunedModel(torch.nn.Module):
 
     def _create_lora_module(self, module, rank, alpha, fisher_info=None):
         device = module.weight.device
+        dtype = module.weight.dtype
         
         if isinstance(module, torch.nn.Linear):
             if fisher_info is not None:
-                W = module.weight.data.detach().cpu().numpy()
-                F = fisher_info.detach().cpu().numpy()
-                row_importance = np.sqrt(np.sum(F, axis=1) + 1e-12)
-                row_importance[row_importance == 0] = 1.0
-                D = np.diag(row_importance)
-                
-                W_tensor = torch.tensor(W, device=device)
-                D_tensor = torch.tensor(D, device=device)
-                DW_tensor = torch.matmul(D_tensor, W_tensor)
+                W = module.weight.data 
+                F = fisher_info.detach()
 
-                U_tensor, S_tensor, VT_tensor = torch.linalg.svd(DW_tensor, full_matrices=False)
-                
-                sqrtS_tensor = torch.diag(torch.sqrt(S_tensor[:rank]))
-                sqrtD_inv_tensor = torch.diag(1.0 / torch.sqrt(torch.tensor(row_importance, device=device)))
-                B_tensor = torch.matmul(torch.matmul(sqrtD_inv_tensor, U_tensor[:, :rank]), sqrtS_tensor)
-                A_tensor = torch.matmul(sqrtS_tensor, VT_tensor[:rank, :])
-                
-                W_star_tensor = W_tensor - torch.matmul(B_tensor, A_tensor)
+                row_importance = F.sum(dim=1).sqrt().to(device=device, dtype=W.dtype)
 
-                lora_down = torch.nn.Linear(module.in_features, rank, bias=False).to(device)
-                lora_up = torch.nn.Linear(rank, module.out_features, bias=False).to(device)
-                lora_down.weight.data = A_tensor
-                lora_up.weight.data = B_tensor
+                U, S, V = torch.svd_lowrank(row_importance.unsqueeze(1) * W, q=rank)
 
-                module.weight.data.copy_(W_star_tensor)
+                lora_A = (V * torch.sqrt(S)).t()
+                lora_B = (1/(row_importance.unsqueeze(1)+1e-5)) * (U * torch.sqrt(S))
+                
+                W_star = W - (lora_B@lora_A)
+                
+                lora_down = torch.nn.Linear(module.in_features, rank, bias=False).to(device=device, dtype=dtype)
+                lora_up = torch.nn.Linear(rank, module.out_features, bias=False).to(device=device, dtype=dtype)
+                
+                lora_down.weight.data.copy_(lora_A.contiguous())
+                lora_up.weight.data.copy_(lora_B.contiguous())
+
+                module.weight.data.copy_(W_star.contiguous())
             else:
-                lora_down = torch.nn.Linear(module.in_features, rank, bias=False).to(device)
-                lora_up = torch.nn.Linear(rank, module.out_features, bias=False).to(device)
+                lora_down = torch.nn.Linear(module.in_features, rank, bias=False).to(device=device, dtype=dtype)
+                lora_up = torch.nn.Linear(rank, module.out_features, bias=False).to(device=device, dtype=dtype)
                 torch.nn.init.normal_(lora_down.weight, std=1.0/rank)
                 torch.nn.init.zeros_(lora_up.weight)
 
@@ -476,61 +471,62 @@ class FineTunedModel(torch.nn.Module):
             )
         elif isinstance(module, torch.nn.Conv2d):
             if fisher_info is not None:
-                W = module.weight.data.detach().cpu().numpy()
-                F = fisher_info.detach().cpu().numpy()
+                W = module.weight.data
+                F = fisher_info.detach()
                 out_c, in_c, kh, kw = W.shape
                 W2d = W.reshape(out_c, -1)
                 F2d = F.reshape(out_c, -1)
-                row_importance = np.sqrt(np.sum(F2d, axis=1) + 1e-12)
-                row_importance[row_importance == 0] = 1.0
-                D = np.diag(row_importance)
                 
-                W2d_tensor = torch.tensor(W2d, device=device)
-                D_tensor = torch.tensor(D, device=device)
-                DW_tensor = torch.matmul(D_tensor, W2d_tensor)
+                row_importance = F2d.sum(dim=1).sqrt().to(device=device, dtype=W.dtype)
 
-                U_tensor, S_tensor, VT_tensor = torch.linalg.svd(DW_tensor, full_matrices=False)
-
-                eff_rank = min(rank, S_tensor.shape[0])
-
-                sqrtS_tensor_diag = torch.diag(torch.sqrt(S_tensor[:eff_rank]))
-                sqrtD_inv_tensor = torch.diag(1.0 / torch.sqrt(torch.tensor(row_importance, device=device)))
+                U, S, V = torch.svd_lowrank(row_importance.unsqueeze(1) * W2d, q=rank)
                 
-                A_tensor = torch.matmul(sqrtS_tensor_diag, VT_tensor[:eff_rank, :])
-                B_tensor = torch.matmul(torch.matmul(sqrtD_inv_tensor, U_tensor[:, :eff_rank]), sqrtS_tensor_diag)
-
-                W_star_tensor = W2d_tensor - torch.matmul(B_tensor, A_tensor)
+                # align the rank of S
+                rank = min(rank, in_c * kh * kw, out_c)
                 
-                A_reshaped = A_tensor.reshape(eff_rank, in_c, kh, kw)
-                B_reshaped = B_tensor.reshape(out_c, eff_rank, 1, 1)
-                W_star_reshaped = W_star_tensor.reshape(out_c, in_c, kh, kw)
+                lora_A = (V * torch.sqrt(S)).t()
+                lora_B = (1/row_importance.unsqueeze(1)+1e-5).sqrt() * (U * torch.sqrt(S))
 
+                W_star = (W2d - (lora_B@lora_A)).reshape(out_c, in_c, kh, kw)
+                
                 lora_down = torch.nn.Conv2d(
-                    module.in_channels, eff_rank, 
-                    kernel_size=(kh, kw),
-                    padding=module.padding,
+                    in_channels=module.in_channels, 
+                    out_channels=rank, 
+                    kernel_size=module.kernel_size,
+                    padding=module.padding, 
                     stride=module.stride,
                     bias=False
-                ).to(device)
-                
+                ).to(device=device, dtype=dtype)
                 lora_up = torch.nn.Conv2d(
-                    eff_rank, module.out_channels,
-                    kernel_size=1, padding=0, bias=False
-                ).to(device)
+                    in_channels=rank, 
+                    out_channels=module.out_channels, 
+                    kernel_size=1, 
+                    padding=0, 
+                    bias=False
+                ).to(device=device, dtype=dtype)
                 
-                lora_down.weight.data.copy_(A_reshaped)
-                lora_up.weight.data.copy_(B_reshaped)
+                lora_down.weight.data.copy_(lora_A.reshape(rank, in_c, kh, kw))
+                lora_up.weight.data.copy_(lora_B.reshape(module.out_channels, rank, 1, 1))
 
-                module.weight.data.copy_(W_star_reshaped)
+                module.weight.data.copy_(W_star)
+                breakpoint()
             else:
                 lora_down = torch.nn.Conv2d(
-                    module.in_channels, rank, 
-                    kernel_size=1, padding=0, bias=False
-                )
+                    in_channels=module.in_channels,
+                    out_channels=rank,
+                    kernel_size=1,
+                    padding=0,
+                    bias=False,
+                ).to(device=device, dtype=dtype)
                 lora_up = torch.nn.Conv2d(
-                    rank, module.out_channels,
-                    kernel_size=1, padding=0, bias=False
-                )
+                    in_channels=rank,
+                    out_channels=module.out_channels,
+                    kernel_size=module.kernel_size,
+                    padding=module.padding,
+                    stride=module.stride,
+                    bias=False,
+                ).to(device=device, dtype=dtype)
+                
                 torch.nn.init.normal_(lora_down.weight, std=1.0/rank)
                 torch.nn.init.zeros_(lora_up.weight)
 
