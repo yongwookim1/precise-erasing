@@ -381,9 +381,11 @@ class FineTunedModel(torch.nn.Module):
 
         fisher_info_dict = None
         if lora_rank is not None and lora_init_prompt is not None:
+            unfreeze(self.model)
             fisher_info_dict = self.compute_fisher_information(
-                model, lora_init_prompt, lora_module_names
+                self.model, lora_init_prompt, lora_module_names
             )
+            freeze(self.model)
 
         for module_name, module in model.named_modules():
             if 'unet' not in module_name:
@@ -439,22 +441,23 @@ class FineTunedModel(torch.nn.Module):
                 W = module.weight.data 
                 F = fisher_info.detach()
 
-                row_importance = F.sum(dim=1).sqrt().to(device=device, dtype=W.dtype)
+                row_importance = F.sum(dim=1).sqrt().to(device=device)
 
-                U, S, V = torch.svd_lowrank(row_importance.unsqueeze(1) * W, q=rank)
+                U, S, V = torch.svd_lowrank(row_importance[:,None] * W, q=rank)
+                row_importance[:] = 0
 
                 lora_A = (V * torch.sqrt(S)).t()
-                lora_B = (1/(row_importance.unsqueeze(1)+1e-5)) * (U * torch.sqrt(S))
+                lora_B = (1/(row_importance+1e-5))[:,None] * (U * torch.sqrt(S))                
                 
                 W_star = W - (lora_B@lora_A)
                 
                 lora_down = torch.nn.Linear(module.in_features, rank, bias=False).to(device=device, dtype=dtype)
                 lora_up = torch.nn.Linear(rank, module.out_features, bias=False).to(device=device, dtype=dtype)
                 
-                lora_down.weight.data.copy_(lora_A.contiguous())
-                lora_up.weight.data.copy_(lora_B.contiguous())
+                lora_down.weight.data.copy_(lora_A)
+                lora_up.weight.data.copy_(lora_B)
 
-                module.weight.data.copy_(W_star.contiguous())
+                module.weight.data.copy_(W_star)
             else:
                 lora_down = torch.nn.Linear(module.in_features, rank, bias=False).to(device=device, dtype=dtype)
                 lora_up = torch.nn.Linear(rank, module.out_features, bias=False).to(device=device, dtype=dtype)
@@ -479,13 +482,13 @@ class FineTunedModel(torch.nn.Module):
                 
                 row_importance = F2d.sum(dim=1).sqrt().to(device=device, dtype=W.dtype)
 
-                U, S, V = torch.svd_lowrank(row_importance.unsqueeze(1) * W2d, q=rank)
+                U, S, V = torch.svd_lowrank(row_importance[:,None] * W2d, q=rank)
                 
                 # align the rank of S
                 rank = min(rank, in_c * kh * kw, out_c)
                 
                 lora_A = (V * torch.sqrt(S)).t()
-                lora_B = (1/row_importance.unsqueeze(1)+1e-5).sqrt() * (U * torch.sqrt(S))
+                lora_B = (1/(row_importance+1e-5))[:,None] * (U * torch.sqrt(S))
 
                 W_star = (W2d - (lora_B@lora_A)).reshape(out_c, in_c, kh, kw)
                 
@@ -504,7 +507,7 @@ class FineTunedModel(torch.nn.Module):
                     padding=0, 
                     bias=False
                 ).to(device=device, dtype=dtype)
-                
+
                 lora_down.weight.data.copy_(lora_A.reshape(rank, in_c, kh, kw))
                 lora_up.weight.data.copy_(lora_B.reshape(module.out_channels, rank, 1, 1))
 
