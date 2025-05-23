@@ -444,7 +444,6 @@ class FineTunedModel(torch.nn.Module):
                 row_importance = F.sum(dim=1).sqrt().to(device=device)
 
                 U, S, V = torch.svd_lowrank(row_importance[:,None] * W, q=rank)
-                row_importance[:] = 0
 
                 lora_A = (V * torch.sqrt(S)).t()
                 lora_B = (1/(row_importance+1e-5))[:,None] * (U * torch.sqrt(S))                
@@ -480,17 +479,17 @@ class FineTunedModel(torch.nn.Module):
                 W2d = W.reshape(out_c, -1)
                 F2d = F.reshape(out_c, -1)
                 
-                row_importance = F2d.sum(dim=1).sqrt().to(device=device, dtype=W.dtype)
+                row_importance = F2d.sum(dim=1).sqrt().to(device=device)
 
                 U, S, V = torch.svd_lowrank(row_importance[:,None] * W2d, q=rank)
                 
-                # align the rank of S
+                # align the rank of S 
                 rank = min(rank, in_c * kh * kw, out_c)
                 
-                lora_A = (V * torch.sqrt(S)).t()
-                lora_B = (1/(row_importance+1e-5))[:,None] * (U * torch.sqrt(S))
+                lora_A = (V * torch.sqrt(S)).t() / 10
+                lora_B = (1/(row_importance+1e-5))[:,None] * (U * torch.sqrt(S)) / 10
 
-                W_star = (W2d - (lora_B@lora_A)).reshape(out_c, in_c, kh, kw)
+                W_star = W - (((lora_B@lora_A).reshape(out_c, in_c, kh, kw)) / 100)
                 
                 lora_down = torch.nn.Conv2d(
                     in_channels=module.in_channels,
@@ -508,7 +507,7 @@ class FineTunedModel(torch.nn.Module):
                     bias=False,
                 ).to(device=device, dtype=dtype)
 
-                lora_down.weight.data.copy_(lora_A.reshape(rank, in_c, kh, kw))
+                lora_down.weight.data.copy_(lora_A.reshape(rank, module.in_channels, kh, kw))
                 lora_up.weight.data.copy_(lora_B.reshape(module.out_channels, rank, 1, 1))
 
                 module.weight.data.copy_(W_star)
@@ -551,7 +550,7 @@ class FineTunedModel(torch.nn.Module):
         diffuser = model
         diffuser.eval()
         criteria = torch.nn.MSELoss()
-        iterations = 10
+        iterations = 20
         nsteps = 50
         prompt = [prompt]
         
