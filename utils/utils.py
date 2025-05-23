@@ -493,19 +493,19 @@ class FineTunedModel(torch.nn.Module):
                 W_star = (W2d - (lora_B@lora_A)).reshape(out_c, in_c, kh, kw)
                 
                 lora_down = torch.nn.Conv2d(
-                    in_channels=module.in_channels, 
-                    out_channels=rank, 
+                    in_channels=module.in_channels,
+                    out_channels=rank,
                     kernel_size=module.kernel_size,
-                    padding=module.padding, 
+                    padding=module.padding,
                     stride=module.stride,
-                    bias=False
+                    bias=False,
                 ).to(device=device, dtype=dtype)
                 lora_up = torch.nn.Conv2d(
-                    in_channels=rank, 
-                    out_channels=module.out_channels, 
-                    kernel_size=1, 
-                    padding=0, 
-                    bias=False
+                    in_channels=rank,
+                    out_channels=module.out_channels,
+                    kernel_size=1,
+                    padding=0,
+                    bias=False,
                 ).to(device=device, dtype=dtype)
 
                 lora_down.weight.data.copy_(lora_A.reshape(rank, in_c, kh, kw))
@@ -516,16 +516,16 @@ class FineTunedModel(torch.nn.Module):
                 lora_down = torch.nn.Conv2d(
                     in_channels=module.in_channels,
                     out_channels=rank,
-                    kernel_size=1,
-                    padding=0,
+                    kernel_size=module.kernel_size,
+                    padding=module.padding,
+                    stride=module.stride,
                     bias=False,
                 ).to(device=device, dtype=dtype)
                 lora_up = torch.nn.Conv2d(
                     in_channels=rank,
                     out_channels=module.out_channels,
-                    kernel_size=module.kernel_size,
-                    padding=module.padding,
-                    stride=module.stride,
+                    kernel_size=1,
+                    padding=0,
                     bias=False,
                 ).to(device=device, dtype=dtype)
                 
