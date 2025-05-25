@@ -411,7 +411,7 @@ class FineTunedModel(torch.nn.Module):
                     )
 
                 ft_module = copy.deepcopy(module)
-                    
+                
                 self.orig_modules[module_name] = module
                 self.ft_modules[module_name] = ft_module
                 
@@ -444,12 +444,14 @@ class FineTunedModel(torch.nn.Module):
                 row_importance = F.sum(dim=1).sqrt().to(device=device)
 
                 U, S, V = torch.svd_lowrank(row_importance[:,None] * W, q=rank)
+                
+                scaling_A, scaling_B = 1, 1
 
-                lora_A = (V * torch.sqrt(S)).t()
-                lora_B = (1/(row_importance+1e-5))[:,None] * (U * torch.sqrt(S))                
-                
-                W_star = W - (lora_B@lora_A)
-                
+                lora_A = ((V * torch.sqrt(S)).t()) / scaling_A
+                lora_B = (1/(row_importance+1e-5))[:,None] * (U * torch.sqrt(S)) / scaling_B
+
+                W_star = (W - (lora_B@lora_A) / (scaling_A*scaling_B))
+
                 lora_down = torch.nn.Linear(module.in_features, rank, bias=False).to(device=device, dtype=dtype)
                 lora_up = torch.nn.Linear(rank, module.out_features, bias=False).to(device=device, dtype=dtype)
                 
@@ -485,11 +487,13 @@ class FineTunedModel(torch.nn.Module):
                 
                 # align the rank of S 
                 rank = min(rank, in_c * kh * kw, out_c)
-                
-                lora_A = (V * torch.sqrt(S)).t() / 10
-                lora_B = (1/(row_importance+1e-5))[:,None] * (U * torch.sqrt(S)) / 10
 
-                W_star = W - (((lora_B@lora_A).reshape(out_c, in_c, kh, kw)) / 100)
+                scaling_A, scaling_B = 10, 10
+
+                lora_A = (V * torch.sqrt(S)).t() / scaling_A
+                lora_B = (1/(row_importance+1e-5))[:,None] * (U * torch.sqrt(S)) / scaling_B
+
+                W_star = W - ((lora_B@lora_A).reshape(out_c, in_c, kh, kw) / (scaling_A * scaling_B))
                 
                 lora_down = torch.nn.Conv2d(
                     in_channels=module.in_channels,
@@ -550,7 +554,7 @@ class FineTunedModel(torch.nn.Module):
         diffuser = model
         diffuser.eval()
         criteria = torch.nn.MSELoss()
-        iterations = 20
+        iterations = 10
         nsteps = 50
         prompt = [prompt]
         
