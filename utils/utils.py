@@ -424,7 +424,7 @@ class FineTunedModel(torch.nn.Module):
                 if fisher_info_dict is not None:
                     fisher_info = fisher_info_dict.get(module_name, None)
                 if lora_rank is not None:
-                    lora_module = self._create_lora_module(module, lora_rank, lora_alpha, fisher_info)
+                    lora_module = self.create_lora_module(module, lora_rank, lora_alpha, fisher_info)
                     self.lora_modules[module_name] = lora_module
                     unfreeze(lora_module)
 
@@ -432,7 +432,7 @@ class FineTunedModel(torch.nn.Module):
         self.orig_modules_list = torch.nn.ModuleList(self.orig_modules.values())
         self.lora_modules_list = torch.nn.ModuleList(self.lora_modules.values())
 
-    def _create_lora_module(self, module, rank, alpha, fisher_info=None):
+    def create_lora_module(self, module, rank, alpha, fisher_info=None):
         device = module.weight.device
         dtype = module.weight.dtype
         
