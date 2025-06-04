@@ -162,7 +162,7 @@ if __name__ == '__main__':
                     prog = 'TrainESD',
                     description = 'Finetuning stable diffusion to erase the concepts')
     parser.add_argument('--erase_concept', help='concept to erase', type=str, required=True)
-    parser.add_argument('--erase_from', help='target concept to erase from', type=str, required=False, default = None)
+    parser.add_argument('--erase_from', help='target concept to erase from', type=str, required=False, default=None)
     parser.add_argument('--train_method', help='Type of method (xattn, noxattn, full, xattn-strict', type=str, required=True)
     parser.add_argument('--iterations', help='Number of iterations', type=int, default=200)
     parser.add_argument('--lr', help='Learning rate', type=float, default=2e-5)
