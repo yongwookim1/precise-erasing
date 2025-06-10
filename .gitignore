@@ -3,6 +3,7 @@ models/
 NSFW/
 test.py
 requirements.txt
+*.ipynb
 
 # Created by https://www.toptal.com/developers/gitignore/api/linux,python
 # Edit at https://www.toptal.com/developers/gitignore?templates=linux,python
