@@ -26,7 +26,7 @@ def train(erase_concept, erase_from, train_method, iterations, negative_guidance
     if lora == False:
         finetuner = FineTunedModel(diffuser, train_method=train_method)
     elif lora == True and lora_init == False:
-        #fine-tuning using LoRA
+        # Fine-tuning using LoRA
         finetuner = FineTunedModel(
             model=diffuser,
             train_method=train_method,
